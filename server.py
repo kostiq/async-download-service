@@ -10,11 +10,8 @@ CHUNK_SIZE = 100 * 1024
 
 
 async def archivate(request):
-    name = request.match_info.get('archive_hash')
-    archive_path = os.path.join(os.environ['PATH_TO_FILES'], name)
-
-    logging.info(archive_path)
-    logging.info(os.path.exists(archive_path))
+    folder_name = request.match_info.get('archive_hash')
+    archive_path = os.path.join(os.environ['PATH_TO_FILES'], folder_name)
 
     if not os.path.exists(archive_path):
         raise web.HTTPNotFound(text="Архив не существует или был удален.")

@@ -1,53 +1,58 @@
-import argparse
 import asyncio
 import logging
 import os
 
 import aiofiles
+import configargparse
 from aiohttp import web
 
 CHUNK_SIZE = 100 * 1024
 
 
-async def archivate(request):
-    folder_name = request.match_info.get('archive_hash')
-    archive_path = os.path.join(os.environ['PATH_TO_FILES'], folder_name)
+class Archivator:
+    def __init__(self, throttling, path_to_files):
+        self.throttling = throttling
+        self.path_to_files = path_to_files
 
-    if not os.path.exists(archive_path):
-        raise web.HTTPNotFound(text="Архив не существует или был удален.")
+    async def get_archive(self, request):
+        folder_name = request.match_info['archive_hash']
+        archive_path = os.path.join(self.path_to_files, folder_name)
 
-    response = web.StreamResponse()
-    response.headers['Content-Type'] = 'text/html'
-    response.headers['Content-Disposition'] = 'attachment; filename="test.zip"'
+        if not os.path.exists(archive_path):
+            raise web.HTTPNotFound(text="Архив не существует или был удален.")
 
-    await response.prepare(request)
+        response = web.StreamResponse()
+        response.headers['Content-Type'] = 'text/html'
+        response.headers['Content-Disposition'] = 'attachment; filename="{}.zip"'.format(folder_name)
 
-    proc = await asyncio.subprocess.create_subprocess_exec('zip', '-r', '-', archive_path, '>',
-                                                           stdout=asyncio.subprocess.PIPE)
-    try:
-        while True:
-            chunk = await proc.stdout.read(CHUNK_SIZE)
-            if not chunk:
-                break
+        await response.prepare(request)
 
-            logging.debug('Sending archive chunk ...')
-            await response.write(chunk)
+        proc = await asyncio.subprocess.create_subprocess_exec('zip', '-r', '-j', '-', archive_path, '>',
+                                                               stdout=asyncio.subprocess.PIPE)
+        try:
+            while True:
+                chunk = await proc.stdout.read(CHUNK_SIZE)
+                if not chunk:
+                    break
 
-            if os.environ['THROTTLING']:
-                await asyncio.sleep(1)
+                logging.debug('Sending archive chunk ...')
+                await response.write(chunk)
 
-        return response
-    except asyncio.CancelledError:
-        logging.debug('Download was interrupted')
-        proc.kill()
-        raise
-    except BaseException:
-        proc.kill()
-        raise
-    finally:
-        outs, errs = await proc.communicate()
-        await response.write(outs)
-        return response
+                if self.throttling:
+                    await asyncio.sleep(1)
+
+            return response
+        except asyncio.CancelledError:
+            logging.debug('Download was interrupted')
+            proc.kill()
+            raise
+        except BaseException:
+            proc.kill()
+            raise
+        finally:
+            outs, errs = await proc.communicate()
+            await response.write(outs)
+            return response
 
 
 async def handle_index_page(request):
@@ -56,29 +61,31 @@ async def handle_index_page(request):
     return web.Response(text=index_contents, content_type='text/html')
 
 
-def setup_env():
-    parser = argparse.ArgumentParser()
+def get_env_params():
+    parser = configargparse.ArgParser(default_config_files=['./config.conf'])
     parser.add_argument('-d', '--debug', action='store_true', help='If provided enable debug')
     parser.add_argument('-t', '--throttling', action='store_true', help='If provided enable sleep between batches')
-    parser.add_argument('-p', '--path',
-                        help='Path to folder with data',
-                        default=os.path.join(os.getcwd(), 'test_photos'))
+    parser.add_argument('-p', '--path', help='Path to folder with data')
 
     args = parser.parse_args()
-    os.environ['THROTTLING'] = os.environ.get('THROTTLING') or str(args.throttling)
-    os.environ['PATH_TO_FILES'] = os.environ.get('PATH_TO_FILES') or str(args.path)
+    throttling = args.throttling or os.environ.get('THROTTLING')
+    path_to_files = args.path or os.environ.get('PATH_TO_FILES')
 
-    if os.environ.get('DEBUG') or args.debug:
-        logging.basicConfig(level=logging.DEBUG)
+    if args.debug or os.environ.get('DEBUG'):
+        logging_level = logging.DEBUG
     else:
-        logging.basicConfig(level=logging.INFO)
+        logging_level = logging.INFO
+
+    logging.basicConfig(level=logging_level)
+
+    return throttling, path_to_files
 
 
 if __name__ == '__main__':
-    setup_env()
+    archivator = Archivator(*get_env_params())
     app = web.Application()
     app.add_routes([
         web.get('/', handle_index_page),
-        web.get('/archive/{archive_hash}/', archivate),
+        web.get('/archive/{archive_hash}/', archivator.get_archive),
     ])
     web.run_app(app)

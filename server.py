@@ -63,22 +63,23 @@ async def handle_index_page(request):
 
 def get_env_params():
     parser = configargparse.ArgParser(default_config_files=['./config.conf'])
-    parser.add_argument('-d', '--debug', action='store_true', help='If provided enable debug')
-    parser.add_argument('-t', '--throttling', action='store_true', help='If provided enable sleep between batches')
-    parser.add_argument('-p', '--path', help='Path to folder with data')
+    parser.add_argument('-d', '--debug',
+                        action='store_true', env_var='DEBUG', help='If provided enable debug')
+    parser.add_argument('-t', '--throttling',
+                        action='store_true', env_var='THROTTLING', help='If provided enable sleep between batches')
+    parser.add_argument('-p', '--path',
+                        env_var='PATH_TO_FILES', help='Path to folder with data')
 
     args = parser.parse_args()
-    throttling = args.throttling or os.environ.get('THROTTLING')
-    path_to_files = args.path or os.environ.get('PATH_TO_FILES')
 
-    if args.debug or os.environ.get('DEBUG'):
+    if args.debug:
         logging_level = logging.DEBUG
     else:
         logging_level = logging.INFO
 
     logging.basicConfig(level=logging_level)
 
-    return throttling, path_to_files
+    return args.throttling, args.path
 
 
 if __name__ == '__main__':
